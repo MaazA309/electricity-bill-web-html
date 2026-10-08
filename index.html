@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Electricity Bill Management System</title>
+<style>
+:root{--bg:#eef2f5;--card:#fff;--ink:#14213d;--mute:#5b6678;--line:#d5dce4;--acc:#f2a900;--ok:#1d7a4d;--bad:#b3261e}
+@media(prefers-color-scheme:dark){:root{--bg:#0f1624;--card:#18223a;--ink:#e8edf5;--mute:#98a3b8;--line:#2b3753;--ok:#4cc38a;--bad:#ff8a80}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 "Segoe UI",system-ui,sans-serif}
+header{background:#14213d;color:#fff;padding:18px 5vw 0}
+.top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+header h1{margin:0;font-size:1.45rem;font-weight:600}
+header p{margin:2px 0 12px;color:#b8c2d6;font-size:.9rem}
+header .g{color:#fff;border-color:#4a587a}
+nav{display:flex;gap:4px;overflow-x:auto;min-height:6px}
+nav button{background:none;border:0;border-bottom:3px solid transparent;color:#b8c2d6;padding:10px 14px;font:inherit;cursor:pointer;white-space:nowrap}
+nav button.on{color:#fff;border-color:var(--acc);font-weight:600}
+main{max-width:1050px;margin:24px auto;padding:0 5vw}
+.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:18px;margin-bottom:20px}
+.two{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px}
+h2{margin:0 0 12px;font-size:1.1rem}
+.row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end}
+label{display:flex;flex-direction:column;font-size:.85rem;color:var(--mute);gap:4px;flex:1;min-width:140px}
+input,select{font:inherit;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--bg);color:var(--ink)}
+button.b{background:var(--acc);color:#14213d;border:0;border-radius:6px;padding:9px 16px;font:inherit;font-weight:600;cursor:pointer}
+button.g{background:none;border:1px solid var(--line);color:var(--ink);border-radius:6px;padding:6px 12px;font:inherit;cursor:pointer}
+button.d{color:var(--bad)}
+:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+.tw{overflow-x:auto}
+table{width:100%;border-collapse:collapse;font-size:.9rem}
+th,td{text-align:left;padding:8px;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--mute);font-weight:600;font-size:.82rem}
+.tag{padding:2px 8px;border-radius:99px;font-size:.78rem;font-weight:600;border:1px solid currentColor}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.mu{color:var(--mute)}
+pre{background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:12px;overflow-x:auto;font-size:.82rem;margin:12px 0 0}
+#msg{position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#14213d;color:#fff;padding:10px 18px;border-radius:8px;display:none;max-width:90vw;border-left:5px solid var(--acc)}
+#msg.bad{border-color:var(--bad)}
+</style>
+</head>
+<body>
+<header>
+  <div class="top"><div><h1>Electricity Bill Management System</h1><p id="sub">Sign in to continue</p></div><div id="who"></div></div>
+  <nav id="nav"></nav>
+</header>
+<main id="app"></main>
+<div id="msg" role="status"></div>
+
+<script>
+/* ===== Tariffs (same values as module3.h) ===== */
+const RES=[[100,3.95],[100,7.74],[100,10.06],[400,12.15],[Infinity,19.55]];
+const COM=16, IND=14, DEMAND=500, GST=0.17, FINE=0.10, DUE_DAYS=30;
+const TYPES=['Residential','Commercial','Industrial'];
+function baseAmt(type,u){
+  if(type==='Commercial') return u*COM;
+  if(type==='Industrial') return u*IND+DEMAND;
+  let l=u,a=0; for(const [c,r] of RES){const t=Math.min(l,c);a+=t*r;l-=t;if(l<=0)break;} return a;
+}
+
+/* ===== Data (kept in this browser's localStorage) ===== */
+const fresh=()=>({cons:[],reads:[],bills:[],pays:[],admins:[{u:'admin',p:'admin123'}]});
+let db=load(), me=null, tab='', edit=null, out='', outName='', F={r:'',bc:'',bm:'',p:''};
+function load(){try{return JSON.parse(localStorage.getItem('ebms2'))||fresh()}catch(e){return fresh()}}
+function save(){try{localStorage.setItem('ebms2',JSON.stringify(db))}catch(e){say('Browser storage unavailable; data will not be kept.',1)}}
+const $=id=>document.getElementById(id);
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const m2=n=>Number(n).toFixed(2);
+const iso=d=>new Date(d.getTime()-d.getTimezoneOffset()*6e4).toISOString().slice(0,10);
+const today=()=>iso(new Date());
+const stamp=()=>today()+' '+new Date().toTimeString().slice(0,8);
+const nid=(p,a,k)=>p+String(a.reduce((m,x)=>Math.max(m,parseInt(String(x[k]).slice(1))||0),0)+1).padStart(3,'0');
+const cname=id=>(db.cons.find(c=>c.id===id)||{name:'Unknown'}).name;
+const ctype=id=>(db.cons.find(c=>c.id===id)||{type:'N/A'}).type;
+const lastR=cid=>db.reads.filter(r=>r.cid===cid).reduce((_,r)=>r.curr,0);
+let tm; function say(t,bad){const e=$('msg');e.textContent=t;e.className=bad?'bad':'';e.style.display='block';clearTimeout(tm);tm=setTimeout(()=>e.style.display='none',3500)}
+const tbl=(h,rows,empty)=>rows.length?`<div class="tw"><table><tr>${h.map(x=>`<th>${x}</th>`).join('')}</tr>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</table></div>`:`<p class="mu">${empty}</p>`;
+const opts=(a,sel)=>a.map(c=>`<option value="${esc(c.id)}"${c.id===sel?' selected':''}>${esc(c.id)} - ${esc(c.name)}</option>`).join('');
+const stat=s=>s==='Paid'?'<span class="tag ok">Paid</span>':'<span class="tag bad">Unpaid</span>';
+
+/* ===== Login ===== */
+function loginA(){const u=$('au').value.trim(),p=$('ap').value;
+  if(db.admins.some(a=>a.u===u&&a.p===p)){me={role:'admin'};tab='Consumers';draw()}else say('Invalid credentials.',1)}
+function loginC(){const i=$('ci').value.trim(),p=$('cp').value,c=db.cons.find(x=>x.id===i&&x.password===p);
+  if(c){me={role:'consumer',id:c.id};tab='Pay a bill';draw()}else say('Invalid ID or password.',1)}
+function logout(){me=null;tab='';out='';draw()}
+const vLogin=()=>`<div class="two">
+<div class="card"><h2>Admin sign in</h2><div class="row"><label>Username<input id="au" autocomplete="username"></label>
+<label>Password<input id="ap" type="password" autocomplete="current-password"></label></div>
+<p><button class="b" onclick="loginA()">Sign in as admin</button></p><p class="mu">Demo account: admin / admin123</p></div>
+<div class="card"><h2>Consumer sign in</h2><div class="row"><label>Consumer ID<input id="ci" placeholder="C001"></label>
+<label>Password<input id="cp" type="password"></label></div>
+<p><button class="b" onclick="loginC()">Sign in as consumer</button></p><p class="mu">The admin creates consumer accounts.</p></div></div>
+<p class="mu">All data is stored in this browser only. Sign-in here is for demonstration, not real security.</p>`;
+
+/* ===== Module 1: consumers ===== */
+function addC(){const v=k=>$(k).value.trim(),name=v('n'),addr=v('a'),ph=v('ph'),pw=$('pw').value;
+  if(!name||!addr||!ph||!pw) return say('Fill in every field.',1);
+  const id=nid('C',db.cons,'id');db.cons.push({id,name,type:$('t').value,address:addr,phone:ph,password:pw});
+  save();say('Consumer added. ID: '+id);draw()}
+function updC(){const c=db.cons.find(x=>x.id===edit);if(!c)return;
+  for(const [k,f] of [['en','name'],['ea','address'],['ep','phone']]){const v=$(k).value.trim();if(v)c[f]=v}
+  save();say('Consumer '+edit+' updated.');edit=null;draw()}
+function delC(id){if(!confirm('Delete consumer '+id+'?'))return;db.cons=db.cons.filter(c=>c.id!==id);save();say('Consumer deleted.');draw()}
+const vCons=()=>{const e=db.cons.find(c=>c.id===edit);return `
+<div class="card"><h2>Add consumer</h2><div class="row">
+<label>Name<input id="n"></label><label>Type<select id="t">${TYPES.map(t=>`<option>${t}</option>`).join('')}</select></label>
+<label>Address<input id="a"></label><label>Phone<input id="ph"></label><label>Password<input id="pw"></label>
+<button class="b" onclick="addC()">Add consumer</button></div></div>
+${e?`<div class="card"><h2>Update ${esc(e.id)}</h2><div class="row"><label>Name<input id="en" placeholder="${esc(e.name)}"></label>
+<label>Address<input id="ea" placeholder="${esc(e.address)}"></label><label>Phone<input id="ep" placeholder="${esc(e.phone)}"></label>
+<button class="b" onclick="updC()">Save changes</button><button class="g" onclick="edit=null;draw()">Cancel</button></div>
+<p class="mu">Leave a field blank to keep its current value.</p></div>`:''}
+<div class="card"><h2>All consumers (${db.cons.length})</h2>${tbl(['ID','Name','Type','Address','Phone',''],
+db.cons.map(c=>[c.id,esc(c.name),c.type,esc(c.address),esc(c.phone),`<button class="g" onclick="edit='${c.id}';draw()">Update</button> <button class="g d" onclick="delC('${c.id}')">Delete</button>`]),'No consumers yet.')}</div>`};
+
+/* ===== Module 2: readings ===== */
+function addR(){const cid=$('rc').value,mon=$('rm').value,cur=parseFloat($('rv').value);
+  if(!cid||!/^\d{4}-\d{2}$/.test(mon)) return say('Choose a consumer and a month (YYYY-MM).',1);
+  if(db.reads.some(r=>r.cid===cid&&r.month===mon)) return say('A reading for '+cid+' / '+mon+' already exists.',1);
+  if(isNaN(cur)) return say('Enter the current reading as a number.',1);
+  const prev=lastR(cid);
+  if(cur<0) return say('Meter readings cannot be negative.',1);
+  if(cur<prev) return say(`Current reading (${Math.trunc(cur)}) cannot be less than previous reading (${Math.trunc(prev)}).`,1);
+  db.reads.push({cid,month:mon,prev,curr:cur,units:cur-prev});save();say('Reading recorded: '+m2(cur-prev)+' units.');draw()}
+function fixR(cid,mon){const r=db.reads.find(x=>x.cid===cid&&x.month===mon);
+  const v=parseFloat(prompt('Corrected current reading (previous is '+m2(r.prev)+'):',r.curr));
+  if(isNaN(v)) return; if(v<r.prev) return say('Current reading cannot be less than the previous reading.',1);
+  r.curr=v;r.units=v-r.prev;save();say('Reading updated. Units: '+m2(r.units));draw()}
+const vReads=()=>`<div class="card"><h2>Enter meter reading</h2>${db.cons.length?`<div class="row">
+<label>Consumer<select id="rc" onchange="$('pv').textContent='Previous reading: '+lastR(this.value)">${opts(db.cons)}</select></label>
+<label>Month<input id="rm" type="month"></label><label>Current reading<input id="rv" type="number" min="0" step="any"></label>
+<button class="b" onclick="addR()">Record reading</button></div><p class="mu" id="pv">Previous reading: ${lastR(db.cons[0].id)}</p>`:'<p class="mu">Add a consumer first.</p>'}</div>
+<div class="card"><h2>Readings</h2><label style="max-width:260px">Filter by consumer<select onchange="F.r=this.value;draw()"><option value="">All</option>${opts(db.cons,F.r)}</select></label>
+${tbl(['Consumer','Name','Month','Previous','Current','Units',''],db.reads.filter(r=>!F.r||r.cid===F.r).map(r=>[r.cid,esc(cname(r.cid)),r.month,m2(r.prev),m2(r.curr),m2(r.units),`<button class="g" onclick="fixR('${r.cid}','${r.month}')">Correct</button>`]),'No readings found.')}</div>`;
+
+/* ===== Module 3: bills ===== */
+function mkBill(c,mon){
+  if(db.bills.some(b=>b.cid===c.id&&b.month===mon)) return 'exists';
+  const r=db.reads.find(x=>x.cid===c.id&&x.month===mon); if(!r) return 'noread';
+  const amount=baseAmt(c.type,r.units),gst=amount*GST,id=nid('B',db.bills,'id');
+  db.bills.push({id,cid:c.id,month:mon,units:r.units,amount,gst,fine:0,total:amount+gst,status:'Unpaid',due:iso(new Date(Date.now()+DUE_DAYS*864e5))});
+  return id}
+function genOne(){const c=db.cons.find(x=>x.id===$('gc').value),mon=$('gm').value;if(!c||!mon)return say('Choose a consumer and month.',1);
+  const r=mkBill(c,mon);
+  if(r==='exists')return say('Bill already generated for '+c.id+' / '+mon+'.',1);
+  if(r==='noread')return say('No meter reading found for '+c.id+' / '+mon+'.',1);
+  save();say('Bill '+r+' generated.');draw()}
+function genAll(){const mon=$('am').value;if(!mon)return say('Choose a month.',1);let g=0,s=0;
+  db.cons.forEach(c=>{const r=mkBill(c,mon);r==='exists'||r==='noread'?s++:g++});save();say(`Generated: ${g} | Skipped: ${s}`);draw()}
+const billRow=b=>[b.id,b.cid,esc(cname(b.cid)),b.month,Math.round(b.units),m2(b.amount),m2(b.gst),m2(b.fine),'<b>'+m2(b.total)+'</b>',stat(b.status),b.due];
+const BH=['Bill','Cons','Name','Month','Units','Base (Rs)','GST 17%','Late fine','Total (Rs)','Status','Due'];
+const vBills=()=>`<div class="two"><div class="card"><h2>Generate one bill</h2><div class="row"><label>Consumer<select id="gc">${opts(db.cons)}</select></label>
+<label>Month<input id="gm" type="month"></label><button class="b" onclick="genOne()">Generate</button></div></div>
+<div class="card"><h2>Generate bills for a month</h2><div class="row"><label>Month<input id="am" type="month"></label>
+<button class="b" onclick="genAll()">Generate for all</button></div></div></div>
+<div class="card"><h2>Bills</h2><div class="row"><label>Consumer<select onchange="F.bc=this.value;draw()"><option value="">All</option>${opts(db.cons,F.bc)}</select></label>
+<label>Month<input type="month" value="${F.bm}" onchange="F.bm=this.value;draw()"></label></div>
+${tbl(BH,db.bills.filter(b=>(!F.bc||b.cid===F.bc)&&(!F.bm||b.month===F.bm)).map(billRow),'No bills found.')}</div>`;
+
+/* ===== Module 4: payments ===== */
+function payBill(id){const b=db.bills.find(x=>x.id===id);
+  if(!b)return say('Bill '+id+' not found.',1);
+  if(me.role==='consumer'&&b.cid!==me.id)return say('That bill is not on your account.',1);
+  if(b.status==='Paid')return say('Bill '+id+' is already paid.',1);
+  let note='';
+  if(today()>b.due&&b.fine===0){b.fine=b.amount*FINE;b.total=b.amount+b.gst+b.fine;note=' Late fine Rs '+m2(b.fine)+' applied.'}
+  db.pays.push({id:nid('P',db.pays,'id'),bid:id,cid:b.cid,date:today(),amt:b.total});b.status='Paid';
+  save();say('Payment of Rs '+m2(b.total)+' recorded.'+note);draw()}
+function lateAll(){let n=0;db.bills.forEach(b=>{if(b.status==='Unpaid'&&b.fine===0&&today()>b.due){b.fine=b.amount*FINE;b.total=b.amount+b.gst+b.fine;n++}});
+  save();say('Late fines applied to '+n+' bill(s).');draw()}
+const payRows=l=>l.map(p=>[p.id,p.bid,p.cid,esc(cname(p.cid)),p.date,m2(p.amt)]);
+const PH=['Payment','Bill','Cons','Name','Date','Amount (Rs)'];
+const unpaidT=(l)=>tbl(['Bill','Month','Units','Total (Rs)','Due',''],l.map(b=>[b.id,b.month,Math.round(b.units),m2(b.total),b.due,`<button class="b" onclick="payBill('${b.id}')">Pay</button>`]),'No unpaid bills.');
+const vPays=()=>{const pl=db.pays.filter(p=>!F.p||p.cid===F.p);return `
+<div class="card"><h2>Unpaid bills</h2>${tbl(['Bill','Cons','Name','Month','Total (Rs)','Due',''],db.bills.filter(b=>b.status==='Unpaid').map(b=>[b.id,b.cid,esc(cname(b.cid)),b.month,m2(b.total),b.due,`<button class="b" onclick="payBill('${b.id}')">Process payment</button>`]),'No unpaid bills.')}
+<p><button class="g" onclick="lateAll()">Apply late fines to all overdue bills</button></p></div>
+<div class="card"><h2>Payment records</h2><label style="max-width:260px">Filter by consumer<select onchange="F.p=this.value;draw()"><option value="">All</option>${opts(db.cons,F.p)}</select></label>
+${tbl(PH,payRows(pl),'No payment records.')}<p class="mu">Records: ${pl.length} | Total: Rs ${m2(pl.reduce((s,p)=>s+p.amt,0))}</p></div>`};
+
+/* ===== Module 5: reports (same layout as module5.h, shown here and downloadable as .txt) ===== */
+function rep(title,cols,rows,foot){const L='-'.repeat(65);
+  return title+'\nGenerated: '+stamp()+'\n'+L+'\n'+cols.map(c=>c[0].padEnd(c[1])).join('')+'\n'+L+'\n'+
+  (rows.length?rows.map(r=>r.map((v,i)=>String(v).padEnd(cols[i][1])).join('')).join('\n')+'\n':'No records found.\n')+'\n'+foot+'\n'}
+const REP={
+ consumers:()=>rep('CONSUMER LIST REPORT',[['ID',10],['Name',22],['Type',15],['Phone',12]],db.cons.map(c=>[c.id,c.name,c.type,c.phone]),'Total Consumers: '+db.cons.length),
+ unpaid:()=>{const u=db.bills.filter(b=>b.status==='Unpaid');return rep('UNPAID BILLS REPORT',[['Bill ID',12],['Cons ID',10],['Name',18],['Month',10],['Total (Rs)',10]],u.map(b=>[b.id,b.cid,cname(b.cid),b.month,m2(b.total)]),'Unpaid Bills: '+u.length+'   Total Pending: Rs '+m2(u.reduce((s,b)=>s+b.total,0)))},
+ revenue:()=>{const m={};db.bills.filter(b=>b.status==='Paid').forEach(b=>m[b.month]=(m[b.month]||0)+b.total);const k=Object.keys(m).sort();
+  return rep('MONTHLY REVENUE REPORT',[['Month',15],['Revenue (Rs)',15]],k.map(x=>[x,m2(m[x])]),'Total Revenue Collected: Rs '+m2(k.reduce((s,x)=>s+m[x],0)))},
+ defaulters:()=>{const m={};db.bills.filter(b=>b.status==='Unpaid').forEach(b=>m[b.cid]=(m[b.cid]||0)+1);const k=Object.keys(m).filter(x=>m[x]>=2);
+  return rep('DEFAULTERS REPORT (2+ Unpaid Bills)',[['Cons ID',10],['Name',22],['Type',12],['Unpaid Bills',12]],k.map(x=>[x,cname(x),ctype(x),m[x]]),'Total Defaulters: '+k.length)},
+ bills:cid=>{const l=db.bills.filter(b=>b.cid===cid);return rep('BILL HISTORY - '+cname(cid)+' ('+cid+')',[['Bill ID',12],['Month',10],['Units',10],['Total (Rs)',14],['Status',8],['Due Date',12]],l.map(b=>[b.id,b.month,Math.round(b.units),m2(b.total),b.status,b.due]),'Total Bills: '+l.length)},
+ pays:cid=>{const l=db.pays.filter(p=>!cid||p.cid===cid);return rep(cid?'PAYMENT HISTORY - '+cname(cid)+' ('+cid+')':'FULL PAYMENT HISTORY',[['Payment ID',12],['Bill ID',12],['Cons ID',10],['Date',14],['Amount (Rs)',12]],l.map(p=>[p.id,p.bid,p.cid,p.date,m2(p.amt)]),'Total Payments: '+l.length+'   Total Amount: Rs '+m2(l.reduce((s,p)=>s+p.amt,0)))}
+};
+function show(name,text){outName=name;out=text;draw()}
+function dl(name,text,type){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type:type||'text/plain'}));a.download=name;a.click();URL.revokeObjectURL(a.href)}
+function backup(){dl('ebms-backup.json',JSON.stringify(db,null,2),'application/json')}
+function restore(i){const f=i.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);
+  if(!['cons','reads','bills','pays','admins'].every(k=>Array.isArray(d[k])))throw 0;db=d;save();say('Backup restored.');draw()}catch(e){say('That file is not a valid backup.',1)}};r.readAsText(f)}
+function wipe(){if(confirm('Erase all data in this browser?')){db=fresh();save();say('All data erased.');draw()}}
+const outCard=()=>out?`<div class="card"><div class="row"><h2 style="flex:1;margin:0">${esc(outName)}</h2><button class="g" onclick="dl('${outName}.txt',out)">Download .txt</button></div><pre>${esc(out)}</pre></div>`:'';
+const vRep=()=>`<div class="card"><h2>Reports</h2><div class="row">
+<button class="g" onclick="show('consumer_list',REP.consumers())">Consumer list</button>
+<button class="g" onclick="show('unpaid_bills',REP.unpaid())">Unpaid bills</button>
+<button class="g" onclick="show('monthly_revenue',REP.revenue())">Monthly revenue</button>
+<button class="g" onclick="show('defaulters',REP.defaulters())">Defaulters</button>
+<button class="g" onclick="show('payment_history_all',REP.pays(''))">Full payment history</button></div>
+<div class="row" style="margin-top:14px"><label style="max-width:300px">Consumer bill history<select id="rb">${opts(db.cons)}</select></label>
+<button class="g" onclick="const c=$('rb').value;c&&show('bill_history_'+c,REP.bills(c))">View report</button></div></div>${outCard()}
+<div class="card"><h2>Data files</h2><p class="mu">Everything lives in this browser. Download a backup to keep it or move it to another device.</p><div class="row">
+<button class="g" onclick="backup()">Download backup (JSON)</button><label style="flex:0">Restore backup<input type="file" accept=".json" onchange="restore(this)"></label>
+<button class="g d" onclick="wipe()">Erase all data</button></div></div>`;
+
+/* ===== Consumer portal ===== */
+const vMine={
+ 'Pay a bill':()=>`<div class="card"><h2>Your unpaid bills</h2>${unpaidT(db.bills.filter(b=>b.cid===me.id&&b.status==='Unpaid'))}<p class="mu">A 10% late fine on the base amount is added if you pay after the due date.</p></div>`,
+ 'Bill history':()=>`<div class="card"><h2>Your bills</h2>${tbl(BH,db.bills.filter(b=>b.cid===me.id).map(billRow),'No bills found.')}</div>`,
+ 'Payment history':()=>{const l=db.pays.filter(p=>p.cid===me.id);return `<div class="card"><h2>Your payments</h2>${tbl(PH,payRows(l),'No payment records.')}<p class="mu">Total paid: Rs ${m2(l.reduce((s,p)=>s+p.amt,0))}</p></div>`},
+ 'My reports':()=>`<div class="card"><h2>My reports</h2><div class="row"><button class="g" onclick="show('bill_history_'+me.id,REP.bills(me.id))">Bill history</button>
+ <button class="g" onclick="show('payment_history_'+me.id,REP.pays(me.id))">Payment history</button></div></div>${outCard()}`
+};
+
+/* ===== Shell ===== */
+const VA={Consumers:vCons,Readings:vReads,Bills:vBills,Payments:vPays,Reports:vRep};
+function draw(){
+  const V=!me?null:me.role==='admin'?VA:vMine;
+  $('sub').textContent=!me?'Sign in to continue':me.role==='admin'?'Admin panel':'Signed in as '+cname(me.id)+' ('+me.id+')';
+  $('who').innerHTML=me?'<button class="g" onclick="logout()">Sign out</button>':'';
+  $('nav').innerHTML=V?Object.keys(V).map(k=>`<button class="${k===tab?'on':''}" onclick="tab='${k}';out='';edit=null;draw()">${k}</button>`).join(''):'';
+  $('app').innerHTML=V?V[tab]():vLogin();
+}
+draw();
+</script>
+</body>
+</html>
